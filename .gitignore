@@ -1,0 +1,20 @@
+# Datos locales: base, PDFs, audio, temas y trabajos propios, configuracion
+# con claves cifradas, log. Nada de esto se publica.
+data/
+
+# Bitacora de desarrollo y documentos de investigacion: material interno.
+BITACORA.md
+privado/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Editores
+.vscode/
+.idea/
