@@ -52,10 +52,53 @@ scheduled tasks that wake the app if you closed it.
 
 1. **A Claude API key**, in Settings, Claude tab. Without it the app still
    searches and ranks, it just shows the original abstracts instead of
-   summaries, and there is nothing to listen to.
+   summaries, and there is nothing to listen to. See
+   [Claude account](#claude-account) below.
 2. **A Zotero collection**, if you want the export. The Zotero connector
    cannot create collections, so make it once by hand and name it in
    Settings, Zotero tab.
+
+### Claude account
+
+The app calls the **Claude API** directly, so it needs an API key from the
+Claude Console. A Claude.ai subscription (Pro, Max, Team) **does not**
+include API access; the two are billed separately.
+
+1. Create an account at [platform.claude.com](https://platform.claude.com)
+   (the Claude Console).
+2. Under **Billing**, add a payment method and buy prepaid credits. The API
+   refuses requests while the balance is zero, even with a valid key.
+3. Under **API keys**, create a key. It starts with `sk-ant-` and is shown
+   only once; copy it then.
+4. In the app: Settings, Claude tab. Paste the key, press **Probar clave**
+   (test key), pick a model, save.
+
+What uses Claude, and when:
+
+| Feature | Calls |
+|---|---|
+| Paper summaries | One per paper kept, on every run |
+| Section summaries | Only when you press *Resumir* in the PDF reader |
+| Topic assistant | Only when you ask it to propose a topic |
+
+Approximate cost of the daily summaries, with the default 10 papers per run
+and two runs a day (the Claude tab shows the same estimate for your own
+settings):
+
+| Model | Per day | Per month |
+|---|---|---|
+| `claude-haiku-4-5`, cheapest | ~0.10 USD | ~3 USD |
+| `claude-sonnet-5`, balanced | ~0.20 USD | ~6 USD |
+| `claude-opus-5`, most capable (default) | ~0.49 USD | ~15 USD |
+
+Section summaries and the topic assistant add on top, only when you use them.
+Setting a monthly spend limit in the Console, under **Limits**, is a good
+idea.
+
+The key is stored encrypted with Windows DPAPI in `data/config.json`, tied to
+your Windows account; copied to another machine it cannot be decrypted. If the
+`ANTHROPIC_API_KEY` environment variable is set, it takes precedence over the
+saved key, which is handy for testing without touching your settings.
 
 ---
 

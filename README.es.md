@@ -53,10 +53,53 @@ dos tareas de respaldo que levantan la app si la cerraste.
 
 1. **Una clave de la API de Claude**, en Configuración, pestaña Claude. Sin
    ella la app igual busca y ordena, solo que muestra los abstracts originales
-   en vez de resúmenes, y no hay nada que escuchar.
+   en vez de resúmenes, y no hay nada que escuchar. Ver
+   [Cuenta de Claude](#cuenta-de-claude) más abajo.
 2. **Una colección de Zotero**, si quieres la exportación. El conector de
    Zotero no puede crear colecciones, así que se crea una vez a mano y se
    nombra en Configuración, pestaña Zotero.
+
+### Cuenta de Claude
+
+La app llama directo a la **API de Claude**, así que necesita una clave de la
+Claude Console. Una suscripción de Claude.ai (Pro, Max, Team) **no** incluye
+acceso a la API; se cobran por separado.
+
+1. Crea una cuenta en [platform.claude.com](https://platform.claude.com)
+   (la Claude Console).
+2. En **Billing**, agrega un método de pago y compra créditos prepagados. Con
+   saldo en cero la API rechaza las peticiones, aunque la clave sea válida.
+3. En **API keys**, crea una clave. Empieza con `sk-ant-` y se muestra una
+   sola vez: cópiala en ese momento.
+4. En la app: Configuración, pestaña Claude. Pega la clave, pulsa **Probar
+   clave**, elige un modelo y guarda.
+
+Qué usa Claude, y cuándo:
+
+| Función | Llamadas |
+|---|---|
+| Resúmenes de papers | Una por cada paper que se queda, en cada corrida |
+| Resúmenes de secciones | Solo cuando pulsas *Resumir* en el lector de PDF |
+| Asistente de temas | Solo cuando le pides que proponga un tema |
+
+Costo aproximado de los resúmenes diarios, con los 10 papers por corrida de
+fábrica y dos corridas al día (la pestaña Claude muestra la misma estimación
+con tu configuración):
+
+| Modelo | Por día | Por mes |
+|---|---|---|
+| `claude-haiku-4-5`, el más barato | ~0.10 USD | ~3 USD |
+| `claude-sonnet-5`, equilibrado | ~0.20 USD | ~6 USD |
+| `claude-opus-5`, el más capaz (por defecto) | ~0.49 USD | ~15 USD |
+
+Los resúmenes de secciones y el asistente de temas se suman aparte, solo
+cuando los usas. Conviene fijar un límite de gasto mensual en la Console, en
+**Limits**.
+
+La clave se guarda cifrada con DPAPI de Windows en `data/config.json`, atada a
+tu cuenta de Windows; copiada a otra máquina no se puede descifrar. Si la
+variable de entorno `ANTHROPIC_API_KEY` está puesta, tiene prioridad sobre la
+clave guardada, lo que sirve para probar sin tocar tu configuración.
 
 ---
 
