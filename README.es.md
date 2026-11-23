@@ -185,8 +185,12 @@ tablas propias.
    DOI `10.48550/arXiv.*`), lo resuelve en doi.org con Crossref de respaldo, y
    **comprueba que el título devuelto aparezca en la portada**. La
    comprobación existe porque las primeras páginas suelen citar DOIs de otros
-   trabajos; sin ella, un documento heredaría los metadatos de otro. Si no hay
-   un DOI válido, la ficha dice *metadatos sin verificar* y te lo pide.
+   trabajos; sin ella, un documento heredaría los metadatos de otro. Los papers
+   de congreso que no traen DOI (ICML, NeurIPS) usan su versión de arXiv,
+   buscada por título exacto y sometida a la misma comprobación; Zotero dirá
+   arXiv en vez del congreso, y el ítem lleva la etiqueta
+   `metadatos-version-arxiv`. Si tampoco aparece, la ficha dice *metadatos sin
+   verificar* y te pide un DOI.
 3. **Resumen a partir del texto completo**, sin las referencias y con un tope
    de unos 10 mil tokens. Sin DOI, el modelo también lee los datos
    bibliográficos de la portada, como recurso provisional.

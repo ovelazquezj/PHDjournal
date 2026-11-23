@@ -76,8 +76,9 @@ de la app, asi que borrar o mover el original no afecta. Un mismo archivo no se
 importa dos veces.</li>
 <li><b>Metadatos por DOI:</b> la app busca el DOI en la portada (o el id de
 arXiv), lo resuelve y comprueba que el titulo coincida con la portada antes de
-usarlo, porque la primera pagina suele citar DOIs de otros trabajos. Si no
-encuentra uno valido, la ficha lo marca como <i>metadatos sin verificar</i> y
+usarlo, porque la primera pagina suele citar DOIs de otros trabajos. Si el documento
+no trae DOI (actas de ICML o NeurIPS), usa su version de arXiv, buscada por
+titulo exacto. Si tampoco la encuentra, la ficha lo marca como <i>metadatos sin verificar</i> y
 te pide el DOI con <b>Indicar DOI</b>.</li>
 <li><b>Resumen:</b> se hace a partir del texto completo, no solo del abstract,
 asi que cuesta varias veces mas que el de un paper de la busqueda. La app te

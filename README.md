@@ -182,8 +182,11 @@ own tables.
    `10.48550/arXiv.*` DOI), resolves it at doi.org with Crossref as fallback,
    and **checks that the returned title appears on the title page**. The check
    exists because first pages often cite other papers' DOIs; without it, a
-   document would inherit someone else's metadata. With no valid DOI the card
-   says *metadatos sin verificar* and asks you for one.
+   document would inherit someone else's metadata. Conference papers that carry
+   no DOI (ICML, NeurIPS) fall back to their arXiv version, found by exact
+   title and put through the same check; Zotero then says arXiv instead of the
+   conference, and the item is tagged `metadatos-version-arxiv`. With no match
+   either, the card says *metadatos sin verificar* and asks you for a DOI.
 3. **Summary from the full text**, references stripped, capped at about 10k
    tokens. Without a DOI, the model also reads the bibliographic data off the
    title page, as a stopgap.
