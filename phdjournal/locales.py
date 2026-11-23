@@ -297,6 +297,61 @@ def verificar_doi(doi: str, portada: str, cfg: Config) -> tuple[dict | None, str
     return meta, "verificado"
 
 
+def _titulos_iguales(a: str, b: str) -> bool:
+    """Mismo título, salvo puntuación y mayúsculas. Exigente a propósito."""
+    pa, pb = normalizar_texto(a).split(), normalizar_texto(b).split()
+    if not pa or not pb:
+        return False
+    if pa == pb:
+        return True
+    comunes = len(set(pa) & set(pb))
+    return comunes / len(set(pa)) >= 0.9 and comunes / len(set(pb)) >= 0.9
+
+
+def buscar_version_arxiv(titulo: str, portada: str, cfg: Config) -> dict | None:
+    """Para documentos sin DOI propio (actas de ICML, NeurIPS...): su versión en arXiv.
+
+    Se busca por título exacto en arXiv. Si la entrada trae el DOI de la
+    versión publicada, se prueba primero ese; si no, el DOI de arXiv. En los
+    dos casos el DOI pasa por la misma verificación contra la portada, así que
+    un título parecido de otro trabajo no se cuela. Lo que se use queda
+    marcado (``extra["_via"]``) porque puede ser otra versión del trabajo.
+    """
+    from .sources import arxiv as fuente_arxiv
+    import xml.etree.ElementTree as ET
+
+    palabras = normalizar_texto(titulo).split()
+    if len(palabras) < 4:
+        return None
+    try:
+        r = httpx.get(
+            fuente_arxiv.BASE,
+            params={"search_query": f'ti:"{" ".join(palabras[:25])}"', "max_results": "5"},
+            headers={"User-Agent": "PHDjournal/1.0"},
+            timeout=30.0,
+            follow_redirects=True,
+        )
+        r.raise_for_status()
+        raiz = ET.fromstring(r.content)
+    except Exception as exc:
+        log.info("arXiv no respondió a la búsqueda por título: %s", exc)
+        return None
+
+    for entrada in raiz.findall("atom:entry", fuente_arxiv.NS):
+        paper = fuente_arxiv._parsear_entrada(entrada)
+        if paper is None or not _titulos_iguales(paper.titulo, titulo):
+            continue
+        dois = [d for d in (paper.doi, f"10.48550/arxiv.{paper.arxiv_id}") if d]
+        for doi in dois:
+            meta, motivo = verificar_doi(doi, portada, cfg)
+            if meta:
+                meta["extra"]["_via"] = "arxiv-titulo"
+                log.info("Versión de arXiv encontrada por título: %s", doi)
+                return meta
+            log.info("DOI de la versión de arXiv descartado: %s", motivo)
+    return None
+
+
 def _primer_doi_valido(candidatos: list[str], portada: str, cfg: Config) -> dict | None:
     for doi in candidatos[:6]:
         meta, motivo = verificar_doi(doi, portada, cfg)
@@ -417,6 +472,11 @@ def importar(
 
     progreso(f"Buscando el DOI de {ruta.name}...")
     meta = _primer_doi_valido(candidatos_doi(ext.portada, ext.meta_pdf), ext.portada, cfg)
+    if meta is None:
+        respaldo = _metadatos_pdf(ext, ruta)
+        if respaldo["titulo"] != ruta.stem:
+            progreso(f"Sin DOI en la portada; buscando {ruta.name} en arXiv...")
+            meta = buscar_version_arxiv(respaldo["titulo"], ext.portada, cfg)
     verificado = meta is not None
     if not verificado:
         meta = _metadatos_pdf(ext, ruta)
@@ -512,6 +572,14 @@ def _mejorar_con_ia(fila, m: dict, texto: str, cfg: Config) -> None:
             return
         log.info("El DOI que leyó Claude no sirvió: %s", motivo)
 
+    # Sin DOI propio: la versión de arXiv, buscada con el título que leyó
+    # Claude, que es más fiable que el de las propiedades del PDF.
+    titulo = m.get("titulo") or fila["titulo"]
+    meta = buscar_version_arxiv(titulo, portada, cfg)
+    if meta:
+        _aplicar_metadatos(fila["id"], meta, "doi", texto)
+        return
+
     base = {
         "titulo": fila["titulo"], "autores": json.loads(fila["autores"] or "[]"),
         "anio": fila["anio"], "fecha_pub": fila["fecha_pub"] or "",
@@ -587,6 +655,8 @@ def item_zotero(fila, cfg: Config) -> dict:
     etiquetas = ["origen:local"]
     if fila["metadatos_origen"] != "doi":
         etiquetas.append("metadatos-sin-verificar")
+    elif json.loads(fila["extra"] or "{}").get("_via") == "arxiv-titulo":
+        etiquetas.append("metadatos-version-arxiv")
     return zotero.construir_item(
         paper_de_documento(fila), resumen,
         fila["resumen_modelo"] or cfg.modelo_claude, fila["trabajo"],

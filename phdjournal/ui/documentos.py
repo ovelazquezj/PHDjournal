@@ -265,10 +265,12 @@ class PanelDocumentos(QWidget):
         meta.setStyleSheet("color:#444; font-size:12px;")
         self.caja_panel.addWidget(meta)
 
-        insignias = [
-            _insignia("metadatos verificados por DOI", "#2e7d32") if verificado
-            else _insignia("metadatos sin verificar", "#ef6c00")
-        ]
+        if not verificado:
+            insignias = [_insignia("metadatos sin verificar", "#ef6c00")]
+        elif extra.get("_via") == "arxiv-titulo":
+            insignias = [_insignia("metadatos de su versión en arXiv", "#558b2f")]
+        else:
+            insignias = [_insignia("metadatos verificados por DOI", "#2e7d32")]
         claves = desglose.get("dominios") or []
         nombres = desglose.get("nombres_dominios") or []
         for i, clave in enumerate(claves[:4]):
