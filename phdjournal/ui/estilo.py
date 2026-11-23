@@ -40,3 +40,33 @@ def _tarjeta(texto: str, color: str = "#eef2f7", borde: str = "#c8d4e3") -> QLab
         "padding:10px; font-size:13px;"
     )
     return lbl
+
+
+def reponer_desplazamiento(barra, valor: int) -> None:
+    """Devuelve una barra de desplazamiento a ``valor`` cuando su rango lo permita.
+
+    Al reconstruir la ficha, su altura se calcula en varios ciclos de eventos;
+    un setValue inmediato se recorta a 0. Se espera a que el rango crezca y se
+    suelta la conexión en cuanto se aplica, o al segundo, lo que llegue antes.
+    """
+    from PySide6.QtCore import QTimer
+
+    if valor <= 0:
+        return
+
+    def _intentar(_min: int = 0, maximo: int | None = None) -> None:
+        maximo = barra.maximum() if maximo is None else maximo
+        if maximo >= valor:
+            barra.setValue(valor)
+            _soltar()
+
+    conectado = [True]
+
+    def _soltar() -> None:
+        if conectado[0]:
+            conectado[0] = False
+            barra.rangeChanged.disconnect(_intentar)
+
+    barra.rangeChanged.connect(_intentar)
+    QTimer.singleShot(1000, _soltar)
+    _intentar()

@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 
 from .. import db, locales, summarize
 from ..config import Config
-from .estilo import COLOR_D, COLOR_VEREDICTO, _tarjeta, color_trabajo
+from .estilo import (
+    COLOR_D, COLOR_VEREDICTO, _tarjeta, color_trabajo, reponer_desplazamiento,
+)
 from .reader import VentanaLector
 from .workers import (
     HiloDOI, HiloImportacion, HiloResumenDocumento, HiloVoz, HiloZotero,
@@ -152,7 +154,18 @@ class PanelDocumentos(QWidget):
     # ------------------------------------------------------------------
 
     def cargar(self, seleccionar: str | None = None) -> None:
-        """Relee la base. ``seleccionar`` deja elegido ese documento."""
+        """Relee la base sin mover al lector.
+
+        Se queda en el documento que estás viendo, con su desplazamiento.
+        ``seleccionar`` solo se usa al importar, para saltar al primero nuevo.
+        Los envíos a Zotero, resúmenes y DOIs terminan en segundo plano y para
+        entonces puedes estar en otro documento: no deben llevarte de vuelta.
+        """
+        actual = self._fila()
+        actual_id = actual["id"] if actual is not None else None
+        scroll_lista = self.lista.verticalScrollBar().value()
+        scroll_ficha = self.scroll.verticalScrollBar().value()
+
         db.inicializar()
         with db.conexion() as con:
             self.filas = db.listar_documentos(con)
@@ -176,16 +189,20 @@ class PanelDocumentos(QWidget):
             self.caja_panel.addStretch()
             return
 
-        indice = 0
-        if seleccionar:
-            indice = next(
-                (i for i, f in enumerate(self.filas) if f["id"] == seleccionar), 0
-            )
-        elif 0 <= self.actual < len(self.filas):
-            indice = self.actual
+        objetivo = seleccionar or actual_id
+        indice = next(
+            (i for i, f in enumerate(self.filas) if f["id"] == objetivo), None
+        )
+        quieto = indice is not None and objetivo == actual_id
+        if indice is None:
+            # El que veías ya no está (lo quitaste): el vecino más cercano.
+            indice = min(max(self.actual, 0), len(self.filas) - 1)
         self.lista.setCurrentRow(indice)
         self.lista.blockSignals(False)
         self.mostrar(indice)
+        if quieto:
+            self.lista.verticalScrollBar().setValue(scroll_lista)
+            reponer_desplazamiento(self.scroll.verticalScrollBar(), scroll_ficha)
 
     def _item(self, fila) -> QListWidgetItem:
         resumen = json.loads(fila["resumen_json"]) if fila["resumen_json"] else {}
@@ -515,7 +532,7 @@ class PanelDocumentos(QWidget):
         self.mensaje.emit(f"Resumiendo el documento con {self.cfg.modelo_claude}...")
         self._hilo_resumen = HiloResumenDocumento(doc_id, self.cfg, self)
         self._hilo_resumen.terminado.connect(
-            lambda d: (self.mensaje.emit("Resumen listo."), self.cargar(seleccionar=d))
+            lambda _d: (self.mensaje.emit("Resumen listo."), self.cargar())
         )
         self._hilo_resumen.fallo.connect(
             lambda m: (
@@ -546,7 +563,7 @@ class PanelDocumentos(QWidget):
     def _doi_listo(self, ok: bool, mensaje: str, doc_id, doi, forzar, despues) -> None:
         self.mensaje.emit(mensaje)
         if ok:
-            self.cargar(seleccionar=doc_id)
+            self.cargar()
             if despues:
                 despues()
             return
@@ -628,7 +645,7 @@ class PanelDocumentos(QWidget):
         with db.conexion() as con:
             db.actualizar_documento(con, doc_id, exportado_zotero=db.ahora())
         self.mensaje.emit(mensaje)
-        self.cargar(seleccionar=doc_id)
+        self.cargar()
 
     def _zotero_falta_coleccion(self, instrucciones: str, fila) -> None:
         r = QMessageBox.question(
@@ -661,7 +678,6 @@ class PanelDocumentos(QWidget):
                 copia.unlink(missing_ok=True)
         except OSError as exc:
             log.warning("No se pudo borrar la copia %s: %s", copia, exc)
-        self.actual = min(self.actual, len(self.filas) - 2)
         self.cargar()
         self.mensaje.emit("Documento quitado.")
 

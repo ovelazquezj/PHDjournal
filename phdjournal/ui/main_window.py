@@ -26,7 +26,9 @@ from .. import db, pipeline, scheduler, zotero
 from ..config import Config
 from ..ranking import Puntaje
 from .documentos import PanelDocumentos
-from .estilo import COLOR_D, COLOR_VEREDICTO, _tarjeta, color_trabajo
+from .estilo import (
+    COLOR_D, COLOR_VEREDICTO, _tarjeta, color_trabajo, reponer_desplazamiento,
+)
 from .iconos import icono_app
 from .reader import VentanaLector
 from .settings_dialog import DialogoConfig
@@ -351,17 +353,49 @@ class VentanaPrincipal(QMainWindow):
         self.actualizar_proxima()
 
     def cargar_corrida(self, corrida_id: int) -> None:
+        """Pinta la corrida. Si es la misma que ya se ve, no mueve al lector.
+
+        Se recarga la misma corrida al volver de Zotero, al generar un resumen
+        o con F5. Antes eso dejaba la lista en el primer paper; ahora se
+        conserva el paper que estás viendo (aunque no sea el que se envió:
+        el envío tarda y puedes haber pasado a otro), el desplazamiento de la
+        lista y el de la ficha. Solo una corrida nueva empieza arriba.
+        """
+        misma = corrida_id == self.corrida_id
+        actual_id = None
+        if misma and 0 <= self.actual < len(self.filas):
+            actual_id = self.filas[self.actual]["id"]
+        scroll_lista = self.lista.verticalScrollBar().value()
+        scroll_ficha = self.scroll.verticalScrollBar().value()
+
         self.corrida_id = corrida_id
         with db.conexion() as con:
             self.filas = db.papers_de_corrida(con, corrida_id)
 
+        # Sin señales mientras se rellena: clear() y setCurrentRow() dispararían
+        # mostrar_paper con filas intermedias.
+        self.lista.blockSignals(True)
         self.lista.clear()
         for fila in self.filas:
             self.lista.addItem(self._item_lista(fila))
+        indice = next(
+            (i for i, f in enumerate(self.filas) if f["id"] == actual_id), None
+        )
         if self.filas:
-            self.lista.setCurrentRow(0)
-        else:
+            self.lista.setCurrentRow(indice if indice is not None else 0)
+        self.lista.blockSignals(False)
+
+        if not self.filas:
+            self.actual = -1
             self._limpiar_panel()
+            return
+        self.mostrar_paper(self.lista.currentRow())
+        if indice is not None:
+            self.lista.verticalScrollBar().setValue(scroll_lista)
+            reponer_desplazamiento(self.scroll.verticalScrollBar(), scroll_ficha)
+        else:
+            self.lista.scrollToTop()
+            self.scroll.verticalScrollBar().setValue(0)
 
     def _item_lista(self, fila) -> QListWidgetItem:
         desglose = json.loads(fila["desglose"] or "{}")
