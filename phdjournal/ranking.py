@@ -267,3 +267,40 @@ def ordenar(
         salida.append((paper, p))
     salida.sort(key=lambda par: par[1].total, reverse=True)
     return salida
+
+
+def detectar_temas(
+    titulo: str, texto: str, perfil: "temas.Perfil | None" = None
+) -> dict:
+    """Qué temas y qué trabajo propio toca un documento, sin puerta ni puntaje.
+
+    Es para los documentos locales: ya los elegiste tú, así que no hay nada
+    que filtrar. Solo se etiquetan. Se usan las mismas reglas de términos que
+    el ranking (umbral por tema, título triple), pero ningún tema "abre" ni
+    "cierra" nada y no hay veto: un documento tuyo de otro campo simplemente
+    sale sin temas.
+
+    ``texto`` debe ser el título más el abstract, no el documento completo:
+    los umbrales están calibrados para abstracts, y un PDF entero de veinte
+    páginas toca casi todos los temas por pura acumulación.
+    """
+    perfil = perfil if perfil is not None else temas.construir()
+    texto_n = normalizar_texto(f"{titulo} {texto}")
+    titulo_n = normalizar_texto(titulo)
+
+    por_dominio: dict[str, float] = {}
+    terminos: list[str] = []
+    for clave, dom in perfil.dominios.items():
+        puntos, hallados = _puntos_de_terminos(texto_n, titulo_n, dom.terminos)
+        if puntos >= perfil.umbral_dominio:
+            por_dominio[clave] = puntos
+            terminos.extend(hallados)
+
+    detectados = sorted(por_dominio, key=lambda c: por_dominio[c], reverse=True)
+    etiqueta = _etiquetar(texto_n, titulo_n) if detectados else None
+    return {
+        "dominios": detectados,
+        "nombres_dominios": [perfil.nombre(c) for c in detectados],
+        "terminos": sorted(set(terminos))[:25],
+        "trabajo": etiqueta,
+    }

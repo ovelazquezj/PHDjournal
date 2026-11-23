@@ -4,6 +4,9 @@
     python -m phdjournal --minimizado        arranca solo en la bandeja
     python -m phdjournal --buscar            hace una corrida por consola y sale
     python -m phdjournal --resumir-faltantes rellena los resúmenes que faltan
+    python -m phdjournal --analizar RUTA...  importa PDFs locales (archivos o
+                                             carpetas) y los resume; con
+                                             --sin-resumen solo los importa
 """
 
 from __future__ import annotations
@@ -126,12 +129,56 @@ def _resumir_faltantes() -> int:
     return 0
 
 
+def _analizar(rutas: list[str], resumir: bool) -> int:
+    """Importa documentos locales desde la consola. No toca la búsqueda diaria."""
+    from . import locales, summarize
+    from .config import Config
+
+    cfg = Config.cargar()
+    pdfs = locales.buscar_pdfs(rutas)
+    if not pdfs:
+        print("No se encontró ningún PDF en las rutas indicadas.")
+        return 1
+    if resumir and not cfg.tiene_clave():
+        print("Sin clave de Claude: se importan sin resumen.")
+        resumir = False
+
+    print(f"{len(pdfs)} PDFs.", end=" ")
+    if resumir:
+        print(f"Resumir cuesta {summarize.costo_documentos(cfg.modelo_claude, len(pdfs))}.")
+    else:
+        print()
+
+    cuenta: dict[str, int] = {}
+    for i, ruta in enumerate(pdfs, start=1):
+        print(f"[{i}/{len(pdfs)}] {ruta.name[:70]}")
+        try:
+            r = locales.importar(ruta, cfg, resumir)
+        except Exception as exc:
+            r = locales.Resultado(ruta, "error", str(exc))
+        cuenta[r.estado] = cuenta.get(r.estado, 0) + 1
+        marca = "DOI verificado" if r.verificado else "sin DOI verificado"
+        print(f"        {r.estado}: {r.mensaje}" + (f" ({marca})" if r.estado == "nuevo" else ""))
+
+    print()
+    print("Listo. " + ", ".join(f"{v} {k}" for k, v in cuenta.items()) + ".")
+    return 0
+
+
 def main() -> int:
     _dpi_por_monitor()
     _configurar_log()
 
     if "--resumir-faltantes" in sys.argv:
         return _resumir_faltantes()
+
+    if "--analizar" in sys.argv:
+        rutas = [a for a in sys.argv[sys.argv.index("--analizar") + 1:]
+                 if not a.startswith("--")]
+        if not rutas:
+            print("Uso: python -m phdjournal --analizar RUTA [RUTA...] [--sin-resumen]")
+            return 2
+        return _analizar(rutas, "--sin-resumen" not in sys.argv)
 
     if "--buscar" in sys.argv:
         from . import pipeline

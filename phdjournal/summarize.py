@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import anthropic
 
@@ -267,6 +268,190 @@ def resumir(paper: Paper, puntaje: Puntaje, cfg: Config) -> tuple[dict, int, int
 
     uso = respuesta.usage
     return datos, int(uso.input_tokens or 0), int(uso.output_tokens or 0)
+
+
+# ---------------------------------------------------------------------------
+# Documentos locales
+# ---------------------------------------------------------------------------
+
+# Cuánto del documento se manda. ~40 mil caracteres son ~10 mil tokens: cubre
+# un paper de conferencia entero y la mitad de uno de revista largo, que es
+# donde están el problema, el método y los resultados.
+DOCUMENTO_MAX_CHARS = 40_000
+
+# Aproximado: tokens de entrada y salida por documento local.
+TOKENS_DOCUMENTO = (11_000, 1_100)
+
+ESQUEMA_DOCUMENTO = {
+    "type": "object",
+    "properties": {
+        **ESQUEMA["properties"],
+        "hallazgo": {
+            "type": "string",
+            "description": "El resultado principal, con las cifras que da el documento.",
+        },
+        "metadatos": {
+            "type": "object",
+            "description": (
+                "Los datos bibliográficos tal como aparecen en la portada del "
+                "documento. Cadena vacía en lo que no aparezca. No adivines."
+            ),
+            "properties": {
+                "titulo": {"type": "string", "description": "Título original, sin traducir."},
+                "autores": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Nombre y apellido de cada autor, en orden.",
+                },
+                "anio": {"type": "string", "description": "Año de publicación, cuatro dígitos."},
+                "venue": {"type": "string", "description": "Revista, congreso o repositorio."},
+                "tipo": {
+                    "type": "string",
+                    "enum": [
+                        "journal", "conference", "preprint", "book", "thesis",
+                        "report", "otro",
+                    ],
+                },
+                "doi": {
+                    "type": "string",
+                    "description": "El DOI de ESTE documento, no el de una referencia.",
+                },
+                "abstract": {
+                    "type": "string",
+                    "description": "El abstract copiado literal, en su idioma original.",
+                },
+            },
+            "required": ["titulo", "autores", "anio", "venue", "tipo", "doi", "abstract"],
+            "additionalProperties": False,
+        },
+    },
+    "required": [*ESQUEMA["required"], "metadatos"],
+    "additionalProperties": False,
+}
+
+_REFERENCIAS = re.compile(
+    r"^\s*(?:\d+\.?\s+)?(references|bibliography|referencias|bibliografía)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _recortar_documento(texto: str) -> str:
+    """Quita las referencias y recorta al tope.
+
+    Las referencias son la parte más larga de muchos papers y no aportan nada
+    al resumen; peor, traen títulos de otros trabajos que confunden al modelo
+    sobre de qué trata este. Se corta en el último encabezado de referencias,
+    siempre que esté en la segunda mitad (si aparece antes, es otra cosa).
+    """
+    cortes = list(_REFERENCIAS.finditer(texto))
+    if cortes and cortes[-1].start() > len(texto) * 0.5:
+        texto = texto[: cortes[-1].start()]
+    if len(texto) > DOCUMENTO_MAX_CHARS:
+        texto = texto[:DOCUMENTO_MAX_CHARS] + "\n\n[... documento recortado ...]"
+    return texto
+
+
+def resumir_documento(
+    texto: str,
+    cfg: Config,
+    metadatos_conocidos: dict | None = None,
+    temas_detectados: list[str] | None = None,
+    trabajo: str | None = None,
+) -> tuple[dict, int, int]:
+    """Resume un PDF local a partir de su texto completo.
+
+    Devuelve (resumen con campo ``metadatos``, tokens_entrada, tokens_salida).
+    Los metadatos verificados por DOI se mandan como contexto, pero el modelo
+    igual devuelve los que lee en la portada: sin DOI, son la mejor fuente que
+    hay.
+    """
+    cliente = _cliente(cfg)
+    partes = []
+    if metadatos_conocidos:
+        partes.append(
+            "Metadatos verificados por DOI (contexto):\n"
+            + "\n".join(f"- {k}: {v}" for k, v in metadatos_conocidos.items() if v)
+        )
+    partes.append(
+        "Señales del buscador (contexto, no las repitas literalmente):\n"
+        f"- Temas detectados: {', '.join(temas_detectados or []) or 'ninguno'}\n"
+        + (
+            f"- Encaje con un trabajo propio: {trabajo}"
+            if trabajo
+            else "- Encaje con un trabajo propio: ninguno claro"
+        )
+    )
+    partes.append(
+        "Este es el TEXTO COMPLETO de un documento que el investigador tiene en "
+        "su disco, extraído de un PDF (puede traer cortes de línea, encabezados "
+        "de página y fórmulas rotas). Resúmelo. Tienes más que un abstract, así "
+        "que el método y el hallazgo deben ser concretos.\n\n"
+        "<documento>\n" + _recortar_documento(texto) + "\n</documento>"
+    )
+    prompt = "\n\n".join(partes)
+
+    def _llamar(con_effort: bool):
+        extra = {}
+        salida = _output_config(
+            cfg.modelo_claude if con_effort else "",
+            {"type": "json_schema", "schema": ESQUEMA_DOCUMENTO},
+        )
+        if salida:
+            extra["output_config"] = salida
+        return cliente.messages.create(
+            model=cfg.modelo_claude,
+            max_tokens=max(cfg.resumen_max_tokens, 3000),
+            system=sistema(cfg),
+            messages=[{"role": "user", "content": prompt}],
+            **extra,
+        )
+
+    try:
+        try:
+            respuesta = _llamar(con_effort=True)
+        except anthropic.BadRequestError as exc:
+            if "effort" not in str(exc):
+                raise
+            respuesta = _llamar(con_effort=False)
+    except anthropic.NotFoundError as exc:
+        raise ErrorResumen(f"Modelo no encontrado: {cfg.modelo_claude}") from exc
+    except anthropic.AuthenticationError as exc:
+        raise ErrorResumen("La clave de la API fue rechazada.") from exc
+    except anthropic.RateLimitError as exc:
+        raise ErrorResumen("Límite de peticiones alcanzado, intenta más tarde.") from exc
+    except anthropic.APIStatusError as exc:
+        raise ErrorResumen(f"La API respondió {exc.status_code}: {exc}") from exc
+    except anthropic.APIConnectionError as exc:
+        raise ErrorResumen("No hubo conexión con la API de Claude.") from exc
+
+    if respuesta.stop_reason == "refusal":
+        raise ErrorResumen("El modelo declinó resumir este documento.")
+    if respuesta.stop_reason == "max_tokens":
+        raise ErrorResumen("El resumen se cortó por longitud; sube el tope de tokens.")
+
+    texto_r = next((b.text for b in respuesta.content if b.type == "text"), "")
+    try:
+        datos = json.loads(texto_r)
+    except json.JSONDecodeError as exc:
+        raise ErrorResumen(f"La respuesta no era JSON válido: {exc}") from exc
+
+    faltantes = [c for c in ESQUEMA["required"] if not datos.get(c)]
+    if faltantes:
+        raise ErrorResumen(f"Al resumen le faltan campos: {', '.join(faltantes)}")
+
+    uso = respuesta.usage
+    return datos, int(uso.input_tokens or 0), int(uso.output_tokens or 0)
+
+
+def costo_documentos(modelo: str, n: int) -> str:
+    """Estimación para confirmar antes de resumir un lote de documentos."""
+    precios = PRECIOS.get(modelo)
+    if not precios:
+        return "sin estimación de costo para este modelo"
+    t_in, t_out = TOKENS_DOCUMENTO
+    total = n * (t_in / 1e6 * precios[0] + t_out / 1e6 * precios[1])
+    plural = "s" if n != 1 else ""
+    return f"~{total:.2f} USD con {modelo} ({n} documento{plural})"
 
 
 def resumir_seccion(titulo_seccion: str, texto: str, cfg: Config) -> str:

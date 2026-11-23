@@ -1,7 +1,10 @@
 """Ventana principal del lector.
 
-Izquierda: los papers de la última corrida. Derecha: la ficha del
-seleccionado, con el resumen, los controles de voz y las acciones.
+Dos pestañas que no se mezclan:
+
+* **Búsqueda diaria**: a la izquierda los papers de la última corrida, a la
+  derecha la ficha del seleccionado, con el resumen, la voz y las acciones.
+* **Mis documentos**: los PDFs importados desde tu disco (``documentos.py``).
 """
 
 from __future__ import annotations
@@ -16,54 +19,20 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
-    QSplitter, QToolBar, QVBoxLayout, QWidget,
+    QSplitter, QTabWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
 from .. import db, pipeline, scheduler, zotero
 from ..config import Config
 from ..ranking import Puntaje
+from .documentos import PanelDocumentos
+from .estilo import COLOR_D, COLOR_VEREDICTO, _tarjeta, color_trabajo
 from .iconos import icono_app
 from .reader import VentanaLector
 from .settings_dialog import DialogoConfig
 from .workers import HiloCorrida, HiloPDF, HiloResumen, HiloVoz, HiloZotero
 
 log = logging.getLogger(__name__)
-
-# Los trabajos propios (T1, T2...) rotan colores: son definidos por el usuario
-# y pueden ser cuantos quiera.
-COLORES_TRABAJO = ["#2e7d32", "#1565c0", "#6a1b9a", "#c62828", "#00838f", "#ef6c00"]
-
-
-def color_trabajo(clave: str | None) -> str:
-    if not clave:
-        return "#555"
-    digitos = "".join(c for c in clave if c.isdigit())
-    i = (int(digitos) - 1) if digitos else 0
-    return COLORES_TRABAJO[i % len(COLORES_TRABAJO)]
-
-
-# Los temas de núcleo se ven; los de soporte, más apagados.
-COLOR_D = {
-    "D1": "#00695c", "D2": "#00695c", "D3": "#00695c", "D10": "#00695c",
-    "D4": "#4527a0", "D5": "#4527a0",
-    "D6": "#78909c", "D7": "#78909c", "D8": "#78909c", "D9": "#78909c",
-}
-COLOR_VEREDICTO = {
-    "leer completo": "#2e7d32",
-    "hojear": "#ef6c00",
-    "solo el abstract": "#757575",
-}
-
-
-def _tarjeta(texto: str, color: str = "#eef2f7", borde: str = "#c8d4e3") -> QLabel:
-    lbl = QLabel(texto)
-    lbl.setWordWrap(True)
-    lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    lbl.setStyleSheet(
-        f"background:{color}; border:1px solid {borde}; border-radius:6px;"
-        "padding:10px; font-size:13px;"
-    )
-    return lbl
 
 
 class VentanaPrincipal(QMainWindow):
@@ -119,6 +88,14 @@ class VentanaPrincipal(QMainWindow):
         a_recargar.setShortcut("F5")
         a_recargar.triggered.connect(self.recargar)
         m_archivo.addAction(a_recargar)
+        m_archivo.addSeparator()
+        a_imp = QAction("&Importar documentos...", self)
+        a_imp.setShortcut("Ctrl+I")
+        a_imp.triggered.connect(self._importar_documentos)
+        m_archivo.addAction(a_imp)
+        a_imp_dir = QAction("Importar &carpeta de documentos...", self)
+        a_imp_dir.triggered.connect(self._importar_carpeta)
+        m_archivo.addAction(a_imp_dir)
         m_archivo.addSeparator()
         a_config = QAction("&Configuración...", self)
         a_config.triggered.connect(self.abrir_config)
@@ -222,7 +199,28 @@ class VentanaPrincipal(QMainWindow):
 
         divisor.addWidget(derecha)
         divisor.setSizes([420, 900])
-        self.setCentralWidget(divisor)
+
+        self.documentos = PanelDocumentos(self.cfg, self)
+        self.documentos.mensaje.connect(lambda m: self.lbl_estado.setText(m))
+
+        self.pestanas = QTabWidget()
+        self.pestanas.addTab(divisor, "Búsqueda diaria")
+        self.pestanas.addTab(self.documentos, "Mis documentos")
+        self.pestanas.currentChanged.connect(self._cambio_pestana)
+        self.setCentralWidget(self.pestanas)
+
+    def _cambio_pestana(self, _indice: int) -> None:
+        # Una sola voz a la vez: cambiar de pestaña calla la otra.
+        self._parar()
+        self.documentos.parar()
+
+    def _importar_documentos(self) -> None:
+        self.pestanas.setCurrentWidget(self.documentos)
+        self.documentos.importar_archivos()
+
+    def _importar_carpeta(self) -> None:
+        self.pestanas.setCurrentWidget(self.documentos)
+        self.documentos.importar_carpeta()
 
     def _barra_audio_fija(self) -> QWidget:
         w = QFrame()
@@ -327,6 +325,8 @@ class VentanaPrincipal(QMainWindow):
         self.cfg = Config.cargar()
         self.salida.setVolume(self.cfg.volumen_voz / 100.0)
         self.cargar_ultima_corrida()
+        self.documentos.actualizar_config(self.cfg)
+        self.documentos.cargar()
         if self.corrida_id != antes:
             self.lbl_estado.setText(
                 f"Recargado: corrida {self.corrida_id} con {len(self.filas)} papers."
@@ -826,6 +826,7 @@ class VentanaPrincipal(QMainWindow):
         if dlg.exec():
             self.cfg = Config.cargar()
             self.salida.setVolume(self.cfg.volumen_voz / 100.0)
+            self.documentos.actualizar_config(self.cfg)
             self.actualizar_proxima()
             self.lbl_estado.setText("Configuración guardada.")
 
@@ -840,5 +841,6 @@ class VentanaPrincipal(QMainWindow):
     def closeEvent(self, evento) -> None:  # noqa: N802
         """Cerrar la ventana no mata la app: se esconde en la bandeja."""
         self.reproductor.stop()
+        self.documentos.parar()
         evento.ignore()
         self.hide()

@@ -65,6 +65,30 @@ subcoleccion que hayas configurado, con el resumen como nota y el PDF adjunto.
 Si Zotero esta cerrado, la app lo abre minimizada.</li>
 </ul>
 
+<h3>Mis documentos: los PDFs que ya tienes</h3>
+<p>La pestana <b>Mis documentos</b> es aparte de la busqueda diaria y no se
+mezcla con ella: sus documentos no pasan por el ranking ni le quitan lugar a
+un paper nuevo.</p>
+<ul>
+<li><b>Importar archivos o carpeta</b> (tambien en Archivo, Ctrl+I): elige
+PDFs o una carpeta, que se recorre completa. Cada PDF se copia a la biblioteca
+de la app, asi que borrar o mover el original no afecta. Un mismo archivo no se
+importa dos veces.</li>
+<li><b>Metadatos por DOI:</b> la app busca el DOI en la portada (o el id de
+arXiv), lo resuelve y comprueba que el titulo coincida con la portada antes de
+usarlo, porque la primera pagina suele citar DOIs de otros trabajos. Si no
+encuentra uno valido, la ficha lo marca como <i>metadatos sin verificar</i> y
+te pide el DOI con <b>Indicar DOI</b>.</li>
+<li><b>Resumen:</b> se hace a partir del texto completo, no solo del abstract,
+asi que cuesta varias veces mas que el de un paper de la busqueda. La app te
+dice el costo estimado antes de empezar.</li>
+<li><b>Enviar a Zotero:</b> va a la misma subcoleccion, con el PDF adjunto y
+la etiqueta <i>origen:local</i>. Si los metadatos no estan verificados, te
+pide el DOI primero. El conector de Zotero no detecta duplicados: si ese PDF ya
+estaba en tu biblioteca, quedara repetido.</li>
+<li>Los PDFs escaneados sin capa de texto no se pueden analizar.</li>
+</ul>
+
 <h3>Temas: que se busca</h3>
 <p>En <b>Configuracion, pestana Temas</b> defines tus areas. Cada tema tiene un
 vocabulario, un peso y una casilla que decide si ese tema, por si solo, basta

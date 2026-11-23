@@ -5,7 +5,13 @@ Guarda todo lo que la app necesita recordar entre corridas:
 * qué papers ya se mostraron, para no repetir ninguno nunca;
 * el resumen generado y si lo generó una IA (trazabilidad de integridad);
 * qué marcaste como útil y qué se exportó a Zotero;
-* la cola de exportación pendiente cuando Zotero no estaba disponible.
+* la cola de exportación pendiente cuando Zotero no estaba disponible;
+* los documentos locales que importaste de tu disco, en tablas propias.
+
+Los documentos locales viven aparte a propósito: no son papers de una
+corrida, no pasan por el ranking y no cuentan como "ya mostrados". Mezclarlos
+en ``papers`` habría hecho que una búsqueda descartara un trabajo nuevo solo
+porque tienes en el disco un PDF con el mismo DOI.
 """
 
 from __future__ import annotations
@@ -101,6 +107,48 @@ CREATE TABLE IF NOT EXISTS cola_zotero (
     enviado_en  TEXT,
     intentos    INTEGER NOT NULL DEFAULT 0,
     ultimo_error TEXT
+);
+
+-- Documentos importados desde el disco. Identidad por hash del archivo:
+-- renombrarlo o moverlo no lo duplica. La copia vive en biblioteca/locales.
+CREATE TABLE IF NOT EXISTS documentos (
+    id               TEXT PRIMARY KEY,         -- 'local:' + sha256[:20]
+    sha256           TEXT NOT NULL UNIQUE,
+    nombre_original  TEXT NOT NULL,
+    ruta_original    TEXT NOT NULL,
+    ruta_pdf         TEXT NOT NULL,            -- la copia dentro de data/
+    titulo           TEXT NOT NULL,
+    autores          TEXT NOT NULL DEFAULT '[]',
+    resumen_origen   TEXT,                     -- el abstract del documento
+    anio             INTEGER,
+    fecha_pub        TEXT,
+    venue            TEXT,
+    tipo_venue       TEXT,
+    doi              TEXT,
+    arxiv_id         TEXT,
+    url              TEXT,
+    extra            TEXT NOT NULL DEFAULT '{}', -- volumen, número, páginas, ISSN...
+    metadatos_origen TEXT NOT NULL,            -- 'doi' | 'ia' | 'pdf'
+    n_paginas        INTEGER DEFAULT 0,
+    desglose         TEXT NOT NULL DEFAULT '{}', -- temas detectados, solo etiqueta
+    trabajo          TEXT,
+    importado_en     TEXT NOT NULL,
+    leido            INTEGER NOT NULL DEFAULT 0,
+    ruta_audio       TEXT,
+    exportado_zotero TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_documentos_doi ON documentos(doi);
+
+CREATE TABLE IF NOT EXISTS resumenes_documentos (
+    documento_id    TEXT PRIMARY KEY REFERENCES documentos(id) ON DELETE CASCADE,
+    idioma          TEXT NOT NULL,
+    modelo          TEXT NOT NULL,
+    generado_en     TEXT NOT NULL,
+    generado_por_ia INTEGER NOT NULL DEFAULT 1,
+    contenido       TEXT NOT NULL,
+    tokens_in       INTEGER DEFAULT 0,
+    tokens_out      INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS kv (
@@ -382,6 +430,93 @@ def cerrar_item_cola(
             "UPDATE cola_zotero SET intentos=intentos+1, ultimo_error=? WHERE id=?",
             (error, item_id),
         )
+
+
+# ---------------------------------------------------------------------------
+# Documentos locales
+# ---------------------------------------------------------------------------
+
+_CAMPOS_DOCUMENTO = (
+    "titulo", "autores", "resumen_origen", "anio", "fecha_pub", "venue",
+    "tipo_venue", "doi", "arxiv_id", "url", "extra", "metadatos_origen",
+    "desglose", "trabajo", "ruta_pdf", "leido", "ruta_audio", "exportado_zotero",
+)
+
+
+def documento_por_hash(con: sqlite3.Connection, sha256: str) -> sqlite3.Row | None:
+    return con.execute(
+        "SELECT * FROM documentos WHERE sha256 = ?", (sha256,)
+    ).fetchone()
+
+
+def guardar_documento(con: sqlite3.Connection, doc: dict) -> None:
+    """Inserta un documento recién importado. ``doc`` trae todas las columnas."""
+    cols = list(doc)
+    con.execute(
+        f"INSERT INTO documentos ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' for _ in cols)})",
+        [doc[c] for c in cols],
+    )
+
+
+def actualizar_documento(con: sqlite3.Connection, doc_id: str, **campos: Any) -> None:
+    malos = set(campos) - set(_CAMPOS_DOCUMENTO)
+    if malos:
+        raise ValueError(f"campos no permitidos: {', '.join(sorted(malos))}")
+    if not campos:
+        return
+    asignaciones = ", ".join(f"{c} = ?" for c in campos)
+    con.execute(
+        f"UPDATE documentos SET {asignaciones} WHERE id = ?",
+        [*campos.values(), doc_id],
+    )
+
+
+def listar_documentos(con: sqlite3.Connection) -> list[sqlite3.Row]:
+    return con.execute(
+        """SELECT d.*, r.contenido AS resumen_json, r.modelo AS resumen_modelo,
+                  r.generado_por_ia
+             FROM documentos d
+             LEFT JOIN resumenes_documentos r ON r.documento_id = d.id
+            ORDER BY d.importado_en DESC, d.titulo"""
+    ).fetchall()
+
+
+def leer_documento(con: sqlite3.Connection, doc_id: str) -> sqlite3.Row | None:
+    return con.execute(
+        """SELECT d.*, r.contenido AS resumen_json, r.modelo AS resumen_modelo,
+                  r.generado_por_ia
+             FROM documentos d
+             LEFT JOIN resumenes_documentos r ON r.documento_id = d.id
+            WHERE d.id = ?""",
+        (doc_id,),
+    ).fetchone()
+
+
+def borrar_documento(con: sqlite3.Connection, doc_id: str) -> None:
+    con.execute("DELETE FROM resumenes_documentos WHERE documento_id = ?", (doc_id,))
+    con.execute("DELETE FROM documentos WHERE id = ?", (doc_id,))
+
+
+def guardar_resumen_documento(
+    con: sqlite3.Connection,
+    doc_id: str,
+    idioma: str,
+    modelo: str,
+    contenido: dict,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+) -> None:
+    con.execute(
+        """INSERT OR REPLACE INTO resumenes_documentos
+           (documento_id, idioma, modelo, generado_en, generado_por_ia, contenido,
+            tokens_in, tokens_out)
+           VALUES (?,?,?,?,1,?,?,?)""",
+        (
+            doc_id, idioma, modelo, ahora(),
+            json.dumps(contenido, ensure_ascii=False), tokens_in, tokens_out,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

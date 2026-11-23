@@ -170,3 +170,95 @@ class HiloSeccion(QThread):
             self.terminado.emit(self.titulo, resumen)
         except Exception as exc:
             self.fallo.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Documentos locales
+# ---------------------------------------------------------------------------
+
+
+class HiloImportacion(QThread):
+    """Importa una lista de PDFs del disco, uno por uno, con cancelación."""
+
+    progreso = Signal(str, int)
+    uno = Signal(object)                # locales.Resultado
+    terminado = Signal(list)            # [locales.Resultado]
+
+    def __init__(self, rutas: list[Path], cfg: Config, resumir: bool, parent=None) -> None:
+        super().__init__(parent)
+        self.rutas = rutas
+        self.cfg = cfg
+        self.resumir = resumir
+        self._cancelar = False
+
+    def cancelar(self) -> None:
+        """Termina el documento en curso y no empieza el siguiente."""
+        self._cancelar = True
+
+    def run(self) -> None:
+        from .. import locales
+
+        resultados = []
+        total = len(self.rutas)
+        for i, ruta in enumerate(self.rutas):
+            if self._cancelar:
+                break
+            pct = int(100 * i / max(total, 1))
+            try:
+                r = locales.importar(
+                    ruta, self.cfg, self.resumir,
+                    progreso=lambda m, i=i: self.progreso.emit(f"[{i + 1}/{total}] {m}", pct),
+                )
+            except Exception as exc:
+                log.exception("Falló la importación de %s", ruta)
+                r = locales.Resultado(Path(ruta), "error", str(exc))
+            resultados.append(r)
+            self.uno.emit(r)
+        self.terminado.emit(resultados)
+
+
+class HiloResumenDocumento(QThread):
+    """Genera o regenera el resumen de un documento local."""
+
+    terminado = Signal(str)             # doc_id
+    fallo = Signal(str)
+
+    def __init__(self, doc_id: str, cfg: Config, parent=None) -> None:
+        super().__init__(parent)
+        self.doc_id = doc_id
+        self.cfg = cfg
+
+    def run(self) -> None:
+        from .. import locales
+
+        try:
+            locales.resumir_documento(self.doc_id, self.cfg)
+            self.terminado.emit(self.doc_id)
+        except Exception as exc:
+            log.exception("No se pudo resumir el documento")
+            self.fallo.emit(str(exc))
+
+
+class HiloDOI(QThread):
+    """Resuelve el DOI que escribió el usuario y completa los metadatos."""
+
+    terminado = Signal(bool, str)       # (aplicado, mensaje)
+
+    def __init__(self, doc_id: str, doi: str, cfg: Config, forzar: bool, parent=None) -> None:
+        super().__init__(parent)
+        self.doc_id = doc_id
+        self.doi = doi
+        self.cfg = cfg
+        self.forzar = forzar
+
+    def run(self) -> None:
+        from .. import locales
+
+        try:
+            ok, mensaje = locales.completar_por_doi(
+                self.doc_id, self.doi, self.cfg, self.forzar
+            )
+        except Exception as exc:
+            log.exception("Falló la resolución del DOI")
+            ok, mensaje = False, str(exc)
+        self.terminado.emit(ok, mensaje)

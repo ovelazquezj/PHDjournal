@@ -59,7 +59,21 @@ TIPO_ITEM = {
     "conference": "conferencePaper",
     "preprint": "preprint",
     "book": "bookSection",
+    "thesis": "thesis",
+    "report": "report",
     "otro": "journalArticle",
+}
+
+# Campos bibliográficos que cada tipo de Zotero admite, de los que trae un
+# DOI resuelto. Mandar un campo que el tipo no tiene hace que Zotero lo
+# descarte en silencio o rechace el ítem, según la versión; mejor filtrar.
+CAMPOS_POR_TIPO = {
+    "journalArticle": {"volume", "issue", "pages", "ISSN", "journalAbbreviation", "language"},
+    "conferencePaper": {"volume", "pages", "publisher", "place", "conferenceName", "ISBN", "language"},
+    "preprint": {"publisher", "number", "language"},
+    "bookSection": {"volume", "pages", "publisher", "place", "ISBN", "language"},
+    "thesis": {"university", "place", "thesisType", "numPages", "language"},
+    "report": {"institution", "place", "reportNumber", "pages", "language"},
 }
 
 
@@ -330,7 +344,12 @@ def _creadores(autores: list[str]) -> list[dict]:
     return salida
 
 
-def _nota_resumen(resumen: dict, modelo: str, puntaje: dict | None) -> str:
+def _nota_resumen(
+    resumen: dict,
+    modelo: str,
+    puntaje: dict | None,
+    base: str = "el abstract del trabajo",
+) -> str:
     """La nota deja constancia explícita de que el resumen lo generó una IA."""
     def esc(t: str) -> str:
         return (
@@ -358,8 +377,8 @@ def _nota_resumen(resumen: dict, modelo: str, puntaje: dict | None) -> str:
         )
     bloques.append(
         "<hr><p><i>Aviso de procedencia: este resumen fue generado por "
-        f"inteligencia artificial ({esc(modelo)}) a partir del abstract del "
-        "trabajo, no por el autor de la tesis. No citar este texto; verificar "
+        f"inteligencia artificial ({esc(modelo)}) a partir de {esc(base)}, "
+        "no por el autor de la tesis. No citar este texto; verificar "
         "contra el original antes de usarlo en el manuscrito.</i></p>"
     )
     return "".join(bloques)
@@ -372,7 +391,17 @@ def construir_item(
     trabajo: str | None,
     puntaje: dict | None = None,
     adjuntar_pdf: bool = True,
+    pdf_local: Path | None = None,
+    base_resumen: str = "el abstract del trabajo",
+    etiquetas_extra: list[str] | None = None,
 ) -> dict:
+    """Arma el ítem para el conector.
+
+    Con ``pdf_local`` el adjunto se sube desde el disco en lugar de bajarse de
+    internet: es el caso de los documentos locales. Los campos bibliográficos
+    finos (volumen, número, páginas, ISSN...) vienen en
+    ``paper.crudo["zotero"]`` cuando el DOI se resolvió.
+    """
     tipo = TIPO_ITEM.get(paper.tipo_venue, "journalArticle")
 
     item: dict = {
@@ -402,6 +431,16 @@ def construir_item(
         item["repository"] = paper.venue or "arXiv"
         if paper.arxiv_id:
             item["archiveID"] = f"arXiv:{paper.arxiv_id}"
+    elif tipo == "bookSection":
+        item["bookTitle"] = paper.venue or ""
+
+    permitidos = CAMPOS_POR_TIPO.get(tipo, set())
+    for campo, valor in (paper.crudo.get("zotero") or {}).items():
+        if campo in permitidos and valor:
+            item[campo] = str(valor)
+
+    for etiqueta in etiquetas_extra or []:
+        item["tags"].append({"tag": etiqueta})
 
     if trabajo:
         item["tags"].append({"tag": trabajo})
@@ -410,9 +449,21 @@ def construir_item(
     if resumen:
         item["tags"].append({"tag": f"veredicto:{resumen.get('veredicto', 'sin veredicto')}"})
         item["tags"].append({"tag": "resumen-IA"})
-        item["notes"].append({"note": _nota_resumen(resumen, modelo, puntaje)})
+        item["notes"].append(
+            {"note": _nota_resumen(resumen, modelo, puntaje, base_resumen)}
+        )
 
-    if adjuntar_pdf and paper.url_pdf:
+    if adjuntar_pdf and pdf_local is not None:
+        item["attachments"].append(
+            {
+                "id": f"{item['id']}-pdf",
+                "title": "PDF",
+                "ruta_local": str(pdf_local),
+                "url": item["url"] or Path(pdf_local).as_uri(),
+                "mimeType": "application/pdf",
+            }
+        )
+    elif adjuntar_pdf and paper.url_pdf:
         item["attachments"].append(
             {
                 "id": f"{item['id']}-pdf",
@@ -435,6 +486,14 @@ def _subir_adjunto(cfg: Config, sesion: str, item: dict, adjunto: dict) -> bool:
     sesión, 201.
     """
     url = adjunto.get("url") or ""
+    ruta_local = adjunto.get("ruta_local") or ""
+    if ruta_local:
+        try:
+            contenido = Path(ruta_local).read_bytes()
+        except OSError as exc:
+            log.info("No se pudo leer el PDF local %s: %s", ruta_local, exc)
+            return False
+        return _enviar_adjunto(cfg, sesion, item, adjunto, contenido, url)
     if not url:
         return False
 
@@ -453,6 +512,16 @@ def _subir_adjunto(cfg: Config, sesion: str, item: dict, adjunto: dict) -> bool:
     if not contenido.startswith(b"%PDF"):
         # Muro de pago o página de aterrizaje disfrazada de PDF.
         log.info("Lo descargado de %s no es un PDF; no se adjunta", url)
+        return False
+    return _enviar_adjunto(cfg, sesion, item, adjunto, contenido, url)
+
+
+def _enviar_adjunto(
+    cfg: Config, sesion: str, item: dict, adjunto: dict, contenido: bytes, url: str
+) -> bool:
+    """Sube los bytes de un PDF por ``saveAttachment``, colgado del ítem padre."""
+    if not contenido.startswith(b"%PDF"):
+        log.info("El adjunto no es un PDF; no se sube")
         return False
 
     metadatos = {

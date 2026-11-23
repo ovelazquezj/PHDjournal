@@ -26,6 +26,7 @@ en la notificación se abre el lector.
 | **Habla** | Voz neuronal, con respaldo local sin conexión |
 | **Lee** | Descarga los PDF de acceso abierto, detecta las secciones, y puede resumir y leer cada una |
 | **Archiva** | Exporta a Zotero con el resumen como nota y el PDF adjunto |
+| **Importa** | Analiza los PDF que ya tienes en tu disco, aparte del feed diario |
 | **Recuerda** | Nunca te muestra dos veces el mismo paper |
 
 ---
@@ -81,6 +82,7 @@ Qué usa Claude, y cuándo:
 | Resúmenes de papers | Una por cada paper que se queda, en cada corrida |
 | Resúmenes de secciones | Solo cuando pulsas *Resumir* en el lector de PDF |
 | Asistente de temas | Solo cuando le pides que proponga un tema |
+| Documentos locales | Uno por PDF importado, a partir del texto completo: de 5 a 7 veces lo de un resumen del feed. Ves la estimación antes de empezar |
 
 Costo aproximado de los resúmenes diarios, con los 10 papers por corrida de
 fábrica y dos corridas al día (la pestaña Claude muestra la misma estimación
@@ -167,6 +169,41 @@ búsqueda**, solo etiquetan, y quedarse sin etiqueta es perfectamente normal.
 
 ---
 
+## Tus propios PDF
+
+La pestaña *Mis documentos* analiza los papers que ya tienes en el disco. Es un
+flujo aparte, que **nunca se mezcla con la búsqueda diaria**: los documentos
+importados no pasan por el ranking, no cuentan como "ya mostrados" y viven en
+tablas propias.
+
+1. **Importa** archivos o una carpeta entera (se recorre completa). Cada PDF se
+   **copia** a `data/biblioteca/locales/`, así que borrar o mover el original
+   no rompe nada. La identidad es el hash del archivo: el mismo archivo nunca
+   se importa dos veces.
+2. **Los metadatos salen del DOI.** La app busca el DOI en las dos primeras
+   páginas y en las propiedades del PDF (un id de arXiv también vale, por su
+   DOI `10.48550/arXiv.*`), lo resuelve en doi.org con Crossref de respaldo, y
+   **comprueba que el título devuelto aparezca en la portada**. La
+   comprobación existe porque las primeras páginas suelen citar DOIs de otros
+   trabajos; sin ella, un documento heredaría los metadatos de otro. Si no hay
+   un DOI válido, la ficha dice *metadatos sin verificar* y te lo pide.
+3. **Resumen a partir del texto completo**, sin las referencias y con un tope
+   de unos 10 mil tokens. Sin DOI, el modelo también lee los datos
+   bibliográficos de la portada, como recurso provisional.
+4. **Temas y trabajos** se etiquetan con el mismo vocabulario del feed, contra
+   el título y el abstract, sin puerta y sin puntaje.
+5. **Zotero**: la misma subcolección destino, el PDF subido desde el disco, los
+   campos completos (volumen, número, páginas, ISSN) y las etiquetas
+   `PHDjournal` y `origen:local`. Un documento sin verificar pide el DOI
+   primero; si no tiene (una tesis, un reporte) puedes enviarlo igual, con la
+   etiqueta `metadatos-sin-verificar`.
+
+Límites: solo PDF; los PDF escaneados sin capa de texto se rechazan (no hay
+OCR); y el conector de Zotero no detecta duplicados, así que un PDF que ya
+estaba en tu biblioteca queda dos veces.
+
+---
+
 ## Dónde vive tu información
 
 Todo lo personal se queda en `data/`, que nunca se versiona:
@@ -178,6 +215,7 @@ Todo lo personal se queda en `data/`, que nunca se versiona:
 | `trabajos.json` | Tus trabajos propios |
 | `phdjournal.sqlite` | Historial de corridas, resúmenes, estado de lectura |
 | `biblioteca/`, `audio/` | PDF descargados y audio generado |
+| `biblioteca/locales/` | Copias de los PDF que importaste |
 
 Los cambios de temas se guardan como **diferencial**, no como reemplazo. Si el
 perfil de fábrica mejora en una versión posterior, recibes la mejora sin
@@ -203,6 +241,7 @@ explícito de no citar ese texto y verificar contra el original.
 | Escuchar todos | *Escuchar todos* |
 | Leer completo | *Leer completo* descarga el PDF y abre el lector por secciones |
 | Guardar en Zotero | *Marcar útil y enviar a Zotero* |
+| Importar tus PDF | `Ctrl+I`, o la pestaña *Mis documentos* |
 | Recargar tras buscar por consola | `F5` |
 | Ayuda | `F1` |
 
@@ -211,6 +250,8 @@ Desde la consola:
 ```powershell
 python -m phdjournal --buscar              # una corrida y sale
 python -m phdjournal --resumir-faltantes   # rellena resúmenes que falten
+python -m phdjournal --analizar RUTA       # importa y resume PDF locales
+                                           # (archivos o carpetas; --sin-resumen para no resumir)
 python -m phdjournal --minimizado          # arranca en la bandeja
 ```
 
@@ -233,6 +274,7 @@ phdjournal/
   tts.py          voz: edge-tts con respaldo SAPI5
   zotero.py       conector local, lanzamiento, guardado dirigido, adjuntos
   pdf.py          biblioteca de PDF y partición en secciones
+  locales.py      PDF locales: importación, verificación del DOI, copia, resumen
   db.py           SQLite: historial, estado, cola de Zotero
   scheduler.py    las dos franjas diarias, con recuperación
   pipeline.py     la corrida completa

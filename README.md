@@ -25,6 +25,7 @@ notification opens the reader.
 | **Speaks** | Neural text to speech, or an offline fallback |
 | **Reads** | Downloads open-access PDFs, splits them into sections, can summarise and read each one |
 | **Files** | Exports to Zotero with the summary as a note and the PDF attached |
+| **Imports** | Analyses PDFs you already have on disk, kept apart from the daily feed |
 | **Remembers** | Never shows you the same paper twice |
 
 ---
@@ -80,6 +81,7 @@ What uses Claude, and when:
 | Paper summaries | One per paper kept, on every run |
 | Section summaries | Only when you press *Resumir* in the PDF reader |
 | Topic assistant | Only when you ask it to propose a topic |
+| Local documents | One per PDF you import, from the full text: roughly 5 to 7 times a feed summary. The estimate is shown before you start |
 
 Approximate cost of the daily summaries, with the default 10 papers per run
 and two runs a day (the Claude tab shows the same estimate for your own
@@ -164,6 +166,40 @@ search**, they only label, and having no label is a perfectly normal answer.
 
 ---
 
+## Your own PDFs
+
+The *Mis documentos* tab analyses papers you already have on disk. It is a
+separate flow, **never mixed with the daily search**: imported documents do
+not go through the ranking, do not count as "already shown", and live in their
+own tables.
+
+1. **Import** files or a whole folder (searched recursively). Each PDF is
+   **copied** into `data/biblioteca/locales/`, so deleting or moving the
+   original does not break anything. Identity is the file hash: the same file
+   is never imported twice.
+2. **Metadata comes from the DOI.** The app looks for a DOI on the first two
+   pages and in the PDF properties (an arXiv id also works, via its
+   `10.48550/arXiv.*` DOI), resolves it at doi.org with Crossref as fallback,
+   and **checks that the returned title appears on the title page**. The check
+   exists because first pages often cite other papers' DOIs; without it, a
+   document would inherit someone else's metadata. With no valid DOI the card
+   says *metadatos sin verificar* and asks you for one.
+3. **Summary from the full text**, references stripped, capped at about 10k
+   tokens. Without a DOI, the model also reads the bibliographic data off the
+   title page, as a stopgap.
+4. **Topics and works** are labelled with the same vocabulary as the feed,
+   against title and abstract, with no gate and no score.
+5. **Zotero**: same target collection, PDF uploaded from disk, full fields
+   (volume, issue, pages, ISSN), tags `PHDjournal` and `origen:local`. An
+   unverified document asks for the DOI first; if it has none (a thesis, a
+   report) you can send it anyway, tagged `metadatos-sin-verificar`.
+
+Limits: PDF only, scanned PDFs without a text layer are rejected (no OCR), and
+the Zotero connector does not detect duplicates, so a PDF already in your
+library ends up there twice.
+
+---
+
 ## Where your data lives
 
 Everything personal stays in `data/`, which is never committed:
@@ -175,6 +211,7 @@ Everything personal stays in `data/`, which is never committed:
 | `trabajos.json` | Your own works |
 | `phdjournal.sqlite` | Run history, summaries, reading state |
 | `biblioteca/`, `audio/` | Downloaded PDFs and generated speech |
+| `biblioteca/locales/` | Copies of the PDFs you imported |
 
 Topic edits are stored as a **diff**, not a replacement. If the shipped
 profile improves in a later version, you get the improvement without losing
@@ -200,6 +237,7 @@ text and to verify against the original.
 | Listen to all of them | *Escuchar todos* |
 | Read in full | *Leer completo* downloads the PDF and opens the section reader |
 | Save to Zotero | *Marcar útil y enviar a Zotero* |
+| Import your PDFs | `Ctrl+I`, or the *Mis documentos* tab |
 | Reload after a console run | `F5` |
 | Help | `F1` |
 
@@ -208,6 +246,8 @@ From the console:
 ```powershell
 python -m phdjournal --buscar              # one run, then exit
 python -m phdjournal --resumir-faltantes   # backfill missing summaries
+python -m phdjournal --analizar RUTA       # import and summarise local PDFs
+                                           # (files or folders; --sin-resumen to skip the summary)
 python -m phdjournal --minimizado          # start in the tray
 ```
 
@@ -230,6 +270,7 @@ phdjournal/
   tts.py          speech: edge-tts with a SAPI5 fallback
   zotero.py       local connector, launching, targeted saving, attachments
   pdf.py          PDF library and section splitting
+  locales.py      local PDFs: import, DOI verification, copy, summary
   db.py           SQLite: history, state, Zotero queue
   scheduler.py    the two daily slots, with catch-up
   pipeline.py     a full run
